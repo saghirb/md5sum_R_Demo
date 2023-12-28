@@ -1,0 +1,139 @@
+---
+output: rmarkdown::github_document
+---
+<!-- README.md is generated from README.Rmd. Please edit that file    -->
+
+## Demo for `tools::md5sum()`
+
+The `tools::md5sum()` function computes the 32-byte MD5 hashes of one or more files. 
+
+From the `md5sum` help page:
+
+> A MD5 ‘hash’ or ‘checksum’ or ‘message digest’ is a 128-bit summary of the file contents represented by 32 hexadecimal digits. Files with different MD5 sums are different: only very exceptionally (and usually with the intent to deceive) are those with the same sums different.
+
+> On Windows all files are read in binary mode (as the md5sum utilities there do): on other OSes the files are read in the default mode (almost always text mode where there is more than one).
+
+> MD5 sums are used as a check that R packages have been unpacked correctly and not subsequently accidentally modified.
+
+
+### Step 0: Load packages
+
+The `md5sum()` function is in the `tools` package. 
+
+```{r setup}
+library(tools) 
+library(data.table)
+```
+
+
+### Step 1: Create some source files
+
+Write some source test files to a temporary directory. These are the files for which we will create the source (reference) md5 hashes.
+```{r writeFiles}
+# Create a temporary directory for the source files. 
+tmpDir <- paste0(tempdir(), "/testArea")
+
+# Create a directory structure with subfolders
+dir.create(paste(tmpDir, "subf1", "subf2", sep = "/"), recursive = TRUE)
+
+# Write some text and binary files
+write.csv(PlantGrowth, file = paste(tmpDir, "PlantGrowth.csv", sep = "/"))
+write.csv(ChickWeight, file = paste(tmpDir, "subf1", "ChickWeight.csv", sep = "/"))
+write.csv(trees, file = paste(tmpDir, "subf1", "subf2", "trees.csv", sep = "/"))
+write.csv(volcano, file = paste(tmpDir, "subf1", "subf2", "volcano.csv", sep = "/"))
+saveRDS(ChickWeight, file = paste(tmpDir, "subf1", "ChickWeight.Rdata", sep = "/"))
+saveRDS(trees, file = paste(tmpDir, "subf1", "subf2", "trees.Rdata", sep = "/"))
+```
+
+List the source files.
+
+```{r listFiles}
+listTmpFiles <- list.files(tmpDir, full.names = FALSE, recursive = TRUE)
+listTmpFiles
+```
+
+### Step 2: Create source MD5 hashes dataset
+
+Create a dataset with MD5 check sums for the source files.
+```{r md5sumDataset, R.options = list(width = 120)}
+wdOrig <- getwd()
+setwd(tmpDir)
+MD5.orig <- data.table(fileName = listTmpFiles)[
+  , md5Orig := lapply(fileName, md5sum)][
+  , md5OrigText := paste0(md5Orig, " ", fileName)][
+    , .(md5OrigText)]
+MD5.orig
+```
+
+Write source MD5 hashes followed by the respective file name to a `.md5` file.
+
+```{r writeMd5File}
+md5Filename <- paste0(tmpDir, "/", "orig.md5")
+writeLines(text = MD5.orig$md5OrigText, con = md5Filename)
+```
+
+> Note: On *nix systems the file `orig.md5` can be check using `md5sum -c orig.md5`.
+
+### Step 3: Create a corrupted version of source files to check
+
+To simulate a user receiving a corrupted version of the source files, let's intentionally make some changes to the source files to get MD5 hash errors during the checks below.
+
+Change a file name to get an error when we check the MD5 hashes below.
+```{r changeFiles1}
+file.rename(from = paste(tmpDir, "subf1", "subf2", "trees.csv", sep = "/"),
+            to = paste(tmpDir, "subf1", "subf2", "TREES.csv", sep = "/"))
+```
+Change the content of another file to get an error when we check the MD5 hashes below.
+```{r changeFiles2}
+file.append(paste(tmpDir, "subf1", "ChickWeight.csv", sep = "/"), 
+            paste(tmpDir, "PlantGrowth.csv", sep = "/"))
+setwd(wdOrig)
+```
+
+These are the corrupted files that the user will actually receive.
+```{r listCorruptedFiles}
+listTmpCorruptedFiles <- list.files(tmpDir, full.names = FALSE, recursive = TRUE)
+listTmpCorruptedFiles
+```
+
+### Step 4: Generate the MD5 hashes for the corrupted files
+
+```{r md5sumCheck}
+setwd(tmpDir)
+# Check all files except the orig.md5 file. 
+checkFiles <- list.files(tmpDir, full.names = FALSE, recursive = TRUE, 
+                         pattern = "[^orig.md5]")
+checkFiles
+
+MD5.check <- data.table(fileName = checkFiles)
+MD5.check[, md5Check := lapply(fileName, md5sum)]
+MD5.check
+```
+
+### Step 5: Read in source MD5 check sums text file
+
+Reading in the MD5 hashes for the source files from `orig.md5` that we created above. 
+```{r md5sumOrig}
+origFileMD5 <- fread(md5Filename, header = FALSE, col.names = c("md5Orig", "fileName"))
+origFileMD5
+```
+
+### Step 6: Check the MD5 hashes
+
+Verify the hashes from the `orig.md5` with the hashes from the "check" MD5 sums. 
+```{r md5sumVerify, R.options = list(width = 100)}
+MD5verify <- merge(origFileMD5, MD5.check, by = "fileName", all = TRUE)
+MD5verify[, Result := fifelse(md5Orig == md5Check, "OK", "Error")]
+
+# Print out the results
+MD5verify
+```
+
++ `OK`: Source and received files match.
++ `Error`: Corrupted file or file not found.
++ `NA`: File received but it is not in the source files. 
+
+---
+
+The R code for this README file is available at:  [Demo_for_tools_md5sum.R](https://github.com/saghirb/md5sum_R_Demo/Demo_for_tools_md5sum.R)
+
